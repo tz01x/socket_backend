@@ -1,14 +1,24 @@
-const app = require("express")();
-const server = require("http").createServer(app);
-const io = require("socket.io")(server);
-const port = process.env.PORT || 8080;
-app.get("/", function (req, res) {
-  res.sendfile("index.html");
-});
-server.listen(port, function () {
-  console.log(`Listening on port ${port}`);
-});
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const { chatConnect } = require('./chat');
 
-io.on("connection", (socket) => {
-  socket.emit("connect", { message: "a new client connected" });
-});
+const expressApp = express();
+const server = http.createServer(expressApp);
+// expressApp.use(express.static(__dirname + '/public'));
+
+const io = new Server(server, {
+  cors: {
+    origin: ['http://localhost:8000','http://localhost:5500'],
+  }
+})
+
+// expressApp.get('/', (req, res, next) => {
+// 	res.sendFile(__dirname + '/index.html');
+// })
+
+server.listen(80);
+
+
+const chatsIO = io.of('/chat');
+chatsIO.on('connection', chatConnect);
