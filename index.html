@@ -4,10 +4,10 @@
     <title>Hello!</title>
   </head>
   <body>
-    Integrating Socket.io with Node.js and Express
+    YO
     <script src="/socket.io/socket.io.js"></script>
     <script>
-      var socket = io('localhost:8080/chat');
+      var socket = io('/chat');
 
       socket.on('connect', function(msg){
           console.log(JSON.stringify(msg));
