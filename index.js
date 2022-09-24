@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -10,7 +11,7 @@ const server = http.createServer(expressApp);
 const io = new Server(server, {
   cors: {
     origin: '*',
-  }
+  },
 })
 
 // expressApp.get('/', (req, res, next) => {
@@ -18,7 +19,7 @@ const io = new Server(server, {
 // });
 
 server.listen(process.env.PORT);
-
+console.log('[Server Start at]',process.env.PORT)
 
 const chatsIO = io.of('/chat');
-chatsIO.on('connection', chatConnect);
+chatsIO.on('connection',(socket)=> chatConnect(chatsIO,socket));
