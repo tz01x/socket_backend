@@ -15,9 +15,9 @@ const io = new Server(server, {
 
 // expressApp.get('/', (req, res, next) => {
 // 	res.sendFile(__dirname + '/index.html');
-// })
+// });
 
-server.listen(80);
+server.listen(process.env.PORT);
 
 
 const chatsIO = io.of('/chat');
