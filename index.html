@@ -5,5 +5,14 @@
   </head>
   <body>
     Integrating Socket.io with Node.js and Express
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      var socket = io('localhost:8080/chat');
+
+      socket.on('connect', function(msg){
+          console.log(JSON.stringify(msg));
+      });
+    </script>
   </body>
+
 </html>
