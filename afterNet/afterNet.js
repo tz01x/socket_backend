@@ -6,7 +6,7 @@ const { throws } = require("assert");
 async function saveMessage(data) {
     try {
 
-        const response = await fetch(`${process.env.API_ENDPOINT}/afternet/add-message`, {
+        const response = await fetch(`https://tumzied.pythonanywhere.com/afternet/add-message`, {
             method: 'POST',
             body: JSON.stringify(data),
             headers: {
