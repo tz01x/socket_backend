@@ -1,24 +1,66 @@
 const { Socket, Namespace } = require("socket.io");
 const fetch = require('node-fetch');
-const { throws } = require("assert");
 
+const BACKEND_API = process.env.API_ENDPOINT + '/api/afternet'
+
+const BACKEND_API_DEFAULT_HEADER = {
+    'Content-Type': 'application/json',
+}
 
 async function saveMessage(data) {
     try {
 
-        const response = await fetch(`https://tumzied.pythonanywhere.com/afternet/add-message`, {
+        const response = await fetch(`${BACKEND_API}/add-message`, {
             method: 'POST',
             body: JSON.stringify(data),
+            headers: BACKEND_API_DEFAULT_HEADER
+        });
+        return { 'detail': 'success', 'data': await response.json() }
+
+    } catch (error) {
+        console.log('[error]', error)
+        return { detail: 'error', 'data': error }
+    }
+}
+
+async function get_user_info(uid) {
+    try {
+        const response = await fetch(BACKEND_API + '/get-user/' + uid, {
+            method: 'GET',
+            headers: BACKEND_API_DEFAULT_HEADER
+        });
+
+        return { detail: 'success', 'data': await response.json() }
+    } catch (error) {
+        return { detail: 'error', 'data': error }
+    }
+}
+
+
+/**
+ * if u2 remove u1 from u2 friend list;
+ * @param {string} uid1 
+ * @param {string} uid2 
+ * @returns {Promise<boolean>}
+ */
+async function hasRemove(uid1, uid2) {
+    try {
+        const response = await fetch(`${process.env.API_ENDPOINT}/afternet/has-remove`, {
+            method: 'POST',
+            body: JSON.stringify({
+                uid_first: uid1,
+                uid_second: uid2
+            }),
             headers: {
                 'Content-Type': 'application/json'
             }
         });
-        const jsonData = await response.json();
-        console.log(jsonData)
+        const jData = await response.json();
+        console.log(jData);
+        return jData?.hasRemoved;
     } catch (error) {
-        console.log('[error]', error)
+        return true;
     }
-
 }
 
 const socketIdToUid = {};
@@ -37,20 +79,31 @@ class AfterNetSocket {
         this.socket = socket;
         this.roomId = ''
         this.uid = null;
+        this.user = null;
         this.connected_with_uid = null;
+        this.hasRemoved = true;
         console.log('[AfterNet.newInstanceCreated] ', socket.id);
         this.markEventFunctions();
 
     }
 
-    on_setRoom(data) {
+    async on_setRoom(data) {
         const { roomId, uid, connected_with_uid } = data;
         if (roomId && uid && connected_with_uid) {
-            this.socket.join(roomId);
-            this.roomId = roomId;
             this.uid = uid;
-            this.connected_with_uid = connected_with_uid;
-            console.log('room set to ', roomId);
+            this.roomId = roomId;
+            this.toMe = roomId + '.me.' + uid;
+
+            this.socket.join([this.roomId, this.toMe]);
+            const result = await get_user_info(this.uid);
+            if (result.detail == 'success') {
+                this.user = result.data;
+            }
+
+
+            // this.connected_with_uid = connected_with_uid;
+            // console.log('room set to ', roomId);
+            // this.hasRemoved = await hasRemove(uid, connected_with_uid);
         }
     }
 
@@ -60,20 +113,40 @@ class AfterNetSocket {
         console.log('[emit "send_message"] ', data);
         // this.socket.join(this.roomId);
         if (this.roomId) {
-            this.io.to(this.roomId).emit('receiveMessage', data);
-            this.addedMessage(data);
-            const sockets = await this.socket.in(this.roomId).allSockets();
-            if (sockets.size == 1) {
-                if (this.connected_with_uid in uidActiveMapper) {
-                    this.socket.to(uidActiveMapper[this.connected_with_uid])
-                        .emit('notification', {
-                            type: 'notify',
-                            reloadRequired: false,
-                            content: `'${data?.displayName}' send a message`,
-                        })
-                }
+            // this.saveMessageAndNotify(data);
+            const response = await saveMessage(data);
+            if (response.detail == 'success') {
+                // broadcast this message
+                this.io.to(this.roomId).emit('receiveMessage', { ...data, 'status': 'success', 'user': this.user });
+            } else {
+
+                this.io.to(this.toMe).emit('lastSentMessage', { ...data, 'status': 'error', 'user': this.user });
             }
+            // send this message to me
+
         }
+    }
+
+    async saveMessageAndNotify(data) {
+        // save the message on DB
+        this.addedMessage(data);
+
+        // const sockets = await this.socket.in(this.roomId).allSockets();
+
+        // if (sockets.size == 1) {
+        // TODO: if connected with user remove(block) this user then  
+        // notification should not be send to connected with user.
+        // if (this.connected_with_uid in uidActiveMapper && this.hasRemoved==false) {
+
+        // this.socket.to(uidActiveMapper[this.connected_with_uid])
+        //     .emit('notification', {
+        //         type: 'notify',
+        //         reloadRequired: false,
+        //         content: `'${data?.displayName}' send a message`,
+        //     });
+
+        // }
+        // }
     }
 
     on_sendNotification(data) {
