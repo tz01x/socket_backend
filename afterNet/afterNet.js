@@ -1,5 +1,7 @@
 const { Socket, Namespace } = require("socket.io");
 const fetch = require('node-fetch');
+const jwt = require('jsonwebtoken');
+
 
 const BACKEND_API = process.env.API_ENDPOINT + '/api/afternet'
 
@@ -36,6 +38,22 @@ async function get_user_info(uid) {
     }
 }
 
+function verifyAccessToken(token, uid) {
+    try {
+
+        const payload = jwt.verify(token, process.env.SECRET_KEY, { algorithms: ['HS256']});
+        if (payload?.type == process.env.TOKEN_TYPE) {
+            const user_info = jwt.verify(payload.user_identifier, process.env.PREFIX + process.env.SECRET_KEY);
+            return user_info.uid == uid
+        }
+    } catch (e) {
+        return false;
+    }
+
+    return false;
+}
+
+
 
 /**
  * if u2 remove u1 from u2 friend list;
@@ -64,7 +82,7 @@ async function hasRemove(uid1, uid2) {
 }
 
 const socketIdToUid = {};
-const uidActiveMapper = {};
+const uiToSocketId = {};
 
 
 class AfterNetSocket {
@@ -84,6 +102,23 @@ class AfterNetSocket {
         this.hasRemoved = true;
         console.log('[AfterNet.newInstanceCreated] ', socket.id);
         this.markEventFunctions();
+
+        this.io.use((socket, next) => {
+            if (this.isValid(socket.request)) {
+                next();
+            } else {
+                next(new Error('invalid'))
+            }
+        })
+
+    }
+
+    isValid(request) {
+        const { origin, token } = request.headers;
+        if(this.uid){
+            return verifyAccessToken(token, this.uid)
+        }
+        return true;
 
     }
 
@@ -153,8 +188,8 @@ class AfterNetSocket {
 
         const { to, content } = data;
         if (to && content) {
-            if (to in uidActiveMapper) {
-                this.socket.to(uidActiveMapper[to])
+            if (to in uiToSocketId) {
+                this.socket.to(uiToSocketId[to])
                     .emit('notification', data)
             }
         }
@@ -166,7 +201,7 @@ class AfterNetSocket {
         if (!!uid) {
             this.uid = uid;
             socketIdToUid[this.socket.id] = uid;
-            uidActiveMapper[uid] = this.socket.id;
+            uiToSocketId[uid] = this.socket.id;
         }
     }
 
@@ -174,7 +209,7 @@ class AfterNetSocket {
 
         // console.log('[AfterNet.on_getUserStatus] ',uid);
         this.socket.join(this.uid);
-        this.io.to(this.uid).emit('receiveUserState', uid && uid in uidActiveMapper);
+        this.io.to(this.uid).emit('receiveUserState', uid && uid in uiToSocketId);
         // this.socket.leave(this.uid);
     }
 
@@ -183,7 +218,7 @@ class AfterNetSocket {
         if (this.socket.id in socketIdToUid) {
             try {
                 const uid = socketIdToUid[this.socket.id];
-                delete uidActiveMapper[uid];
+                delete uiToSocketId[uid];
                 delete socketIdToUid[this.socket.id];
             } catch (e) {
                 console.log('[AfterNet.Disconnect.Error] ', e);
