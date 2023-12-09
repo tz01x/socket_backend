@@ -45,16 +45,17 @@ async function get_user_info(uid, token) {
 }
 
 function verifyAccessToken(token, uid) {
-    console.log('envs ',process.env)
     try {
 
         const payload = jwt.verify(token, process.env.SECRET_KEY, { algorithms: ['HS256']});
+        console.log('jwt payload are',payload)
         if (payload?.type == process.env.TOKEN_TYPE) {
             const user_info = jwt.verify(payload.user_identifier, process.env.PREFIX + process.env.SECRET_KEY);
             console.log('isValid will get :', user_info.uid == uid , ` for token.uid ${user_info.uid} and uid ${uid}`)
             return user_info.uid == uid
         }
     } catch (e) {
+        console.log('error at verifying access code ', e)
         return false;
     }
 
