@@ -46,7 +46,7 @@ async function get_user_info(uid, token) {
 
 function verifyAccessToken(token, uid) {
     try {
-
+        console.log(`verifying token with token=${token} uid=${uid} se=${process.env.SECRET_KEY}`)
         const payload = jwt.verify(token, process.env.SECRET_KEY, { algorithms: ['HS256']});
         console.log('jwt payload are',payload)
         if (payload?.type == process.env.TOKEN_TYPE) {
