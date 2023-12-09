@@ -1,6 +1,7 @@
 const { Socket, Namespace } = require("socket.io");
 const fetch = require('node-fetch');
 const jwt = require('jsonwebtoken');
+const res = require("express/lib/response");
 
 
 const BACKEND_API = process.env.API_ENDPOINT + '/api/afternet'
@@ -25,14 +26,19 @@ async function saveMessage(data) {
     }
 }
 
-async function get_user_info(uid) {
+async function get_user_info(uid, token) {
     try {
         const response = await fetch(BACKEND_API + '/get-user/' + uid, {
             method: 'GET',
-            headers: BACKEND_API_DEFAULT_HEADER
+            headers: {
+            ...BACKEND_API_DEFAULT_HEADER,
+            'Authorization': `Bearer `+token
+            }
         });
-
-        return { detail: 'success', 'data': await response.json() }
+        if(response.ok){
+            return { detail: 'success', 'data': await response.json() }
+        }
+        return {detail: 'error', 'data': (await response.json())['detail']}
     } catch (error) {
         return { detail: 'error', 'data': error }
     }
@@ -44,6 +50,7 @@ function verifyAccessToken(token, uid) {
         const payload = jwt.verify(token, process.env.SECRET_KEY, { algorithms: ['HS256']});
         if (payload?.type == process.env.TOKEN_TYPE) {
             const user_info = jwt.verify(payload.user_identifier, process.env.PREFIX + process.env.SECRET_KEY);
+            // console.log('isValid will get :', user_info.uid == uid , ` for token.uid ${user_info.uid} and uid ${uid}`)
             return user_info.uid == uid
         }
     } catch (e) {
@@ -81,9 +88,40 @@ async function hasRemove(uid1, uid2) {
     }
 }
 
-const socketIdToUid = {};
-const uiToSocketId = {};
+function isValid(request) {
+    const { origin,uid, token } = request.headers;
+    if(uid && verifyAccessToken(token, uid)){
+        return true;
+    }
+    return false;
 
+}
+
+async function getChatRoomMembers(roomID,uid,token){
+    try {
+        const response = await fetch(`${BACKEND_API}/get-chat-room-members/${roomID}/${uid}`, {
+            method: 'GET',
+            headers: {
+                ...BACKEND_API_DEFAULT_HEADER,
+                'Authorization': `Bearer `+token
+            }
+        });
+        if(response.ok){
+            const jData = await response.json();
+            return [false, jData];
+        }
+        return [true, await response.text()]
+    } catch (error) {
+        return [true, error];
+    }
+}
+
+
+const uidToApplicationSocketId = new Map();
+const uidToCurrentActiveRoomSocketId = new Map();
+
+const socketIdToApplicationUid = new Map();
+const socketToCurrentActiveRoomUid = new Map();
 
 class AfterNetSocket {
     /**
@@ -98,45 +136,42 @@ class AfterNetSocket {
         this.roomId = ''
         this.uid = null;
         this.user = null;
+        this.token = null;
         this.connected_with_uid = null;
         this.hasRemoved = true;
-        console.log('[AfterNet.newInstanceCreated] ', socket.id);
+        this.roomMembers = null;
+        console.log('[AfterNet.newInstanceCreated] ', socket.id,this.uid);
         this.markEventFunctions();
-
-        this.io.use((socket, next) => {
-            if (this.isValid(socket.request)) {
-                next();
-            } else {
-                next(new Error('invalid'))
-            }
-        })
-
-    }
-
-    isValid(request) {
-        const { origin, token } = request.headers;
-        if(this.uid){
-            return verifyAccessToken(token, this.uid)
-        }
-        return true;
-
     }
 
     async on_setRoom(data) {
         const { roomId, uid, connected_with_uid } = data;
+        console.log('setting ... room ')
         if (roomId && uid && connected_with_uid) {
+            this.socket
             this.uid = uid;
             this.roomId = roomId;
             this.toMe = roomId + '.me.' + uid;
-
+            this.token = this.socket.request.headers.token;
             this.socket.join([this.roomId, this.toMe]);
-            const result = await get_user_info(this.uid);
+            console.log(`config room : socket id ${this.socket.id} for user ${uid}`);
+            const result = await get_user_info(this.uid, this.socket.request.headers.token);
+            
             if (result.detail == 'success') {
                 this.user = result.data;
+                uidToCurrentActiveRoomSocketId.set(uid,this.socket.id);
+                socketToCurrentActiveRoomUid.set(this.socket.id, uid);
+            }
+            const [hasError, res]  = await getChatRoomMembers(this.roomId,this.uid,this.token);
+            if(!hasError){
+
+                this.roomMembers = res;
+                this.others_uids = this.roomMembers['others'].map(member=>{
+                    return member?.user?.uid
+                });
             }
 
-
-            // this.connected_with_uid = connected_with_uid;
+            // this.connected_with_uid = s;
             // console.log('room set to ', roomId);
             // this.hasRemoved = await hasRemove(uid, connected_with_uid);
         }
@@ -150,9 +185,39 @@ class AfterNetSocket {
         if (this.roomId) {
             // this.saveMessageAndNotify(data);
             const response = await saveMessage(data);
+
             if (response.detail == 'success') {
                 // broadcast this message
                 this.io.to(this.roomId).emit('receiveMessage', { ...data, 'status': 'success', 'user': this.user });
+                // todo: SEND NOTIFICATIONS to all other member how is not in this message room.
+           
+                let sockets = await this.socket.in(this.roomId).allSockets();
+                sockets = Array.from(sockets);
+                const currentRoomActiveSocketIDs = new Map(
+                    sockets.map(v=>[v,''])
+                ); 
+
+                const currentActiveUidToSocketID = new Map(sockets.filter(sid=>socketToCurrentActiveRoomUid.has(sid)).map((sid)=>{
+                    return [socketToCurrentActiveRoomUid.get(sid),sid];
+                }));
+                
+                this.others_uids.forEach(uid=>{
+                    // user who is not in the this room
+                    
+                    if(!currentActiveUidToSocketID.has(uid)){
+                        if(uidToApplicationSocketId.has(uid)){
+                            this.socket.to(uidToApplicationSocketId.get(uid))
+                            .emit('notification', {
+                                type: 'new-message',
+                                reloadRequired: false,
+                                content: {roomId:this.roomId},
+                            });
+                        }
+                    }
+ 
+                })
+                
+
             } else {
 
                 this.io.to(this.toMe).emit('lastSentMessage', { ...data, 'status': 'error', 'user': this.user });
@@ -165,6 +230,7 @@ class AfterNetSocket {
     async saveMessageAndNotify(data) {
         // save the message on DB
         this.addedMessage(data);
+        // get all the socket ids for this room.
 
         // const sockets = await this.socket.in(this.roomId).allSockets();
 
@@ -184,47 +250,48 @@ class AfterNetSocket {
         // }
     }
 
-    on_sendNotification(data) {
+    // on_sendNotification(data) {
 
-        const { to, content } = data;
-        if (to && content) {
-            if (to in uiToSocketId) {
-                this.socket.to(uiToSocketId[to])
-                    .emit('notification', data)
-            }
-        }
-    }
+    //     const { to, content } = data;
+    //     if (to && content) {
+    //         if (to in uiToSocketId) {
+    //             this.socket.to(uiToSocketId[to].app)
+    //                 .emit('notification', data)
+    //         }
+    //     }
+    // }
 
     on_setActiveUser(data) {
         // console.log('[AfterNet.setActiveIsCalled]',data);
         const { uid } = data;
         if (!!uid) {
-            this.uid = uid;
-            socketIdToUid[this.socket.id] = uid;
-            uiToSocketId[uid] = this.socket.id;
+            console.log(`application socket id ${this.socket.id} for user ${uid}`);
+            // socketIdToUid[this.socket.id] = {"app":uid};
+            // uiToSocketId[uid] = {"app":this.socket.id};
+            uidToApplicationSocketId.set(uid,this.socket.id);
+            socketIdToApplicationUid.set(this.socket.id,uid);
         }
     }
 
     on_getUserStatus({ uid }) {
 
         // console.log('[AfterNet.on_getUserStatus] ',uid);
-        this.socket.join(this.uid);
-        this.io.to(this.uid).emit('receiveUserState', uid && uid in uiToSocketId);
+        // this.socket.join(this.uid);
+        // this.io.to(this.uid).emit('receiveUserState', uid && uid in uiToSocketId);
         // this.socket.leave(this.uid);
     }
 
     on_disconnect(data) {
-        // console.log('[AfterNet.Disconnect] ',data);
-        if (this.socket.id in socketIdToUid) {
-            try {
-                const uid = socketIdToUid[this.socket.id];
-                delete uiToSocketId[uid];
-                delete socketIdToUid[this.socket.id];
-            } catch (e) {
-                console.log('[AfterNet.Disconnect.Error] ', e);
-            }
-        }
+        console.log('[AfterNet.Disconnect] ',this.socket.id, this.uid);
+        
+        if(uidToCurrentActiveRoomSocketId.has(this.uid) && uidToCurrentActiveRoomSocketId.get(this.uid) === this.socket.id){
+            uidToCurrentActiveRoomSocketId.delete(this.uid);
+            socketToCurrentActiveRoomUid.delete(this.socket.id);
 
+        }else if(uidToApplicationSocketId.has(this.uid) && uidToApplicationSocketId.get(this.uid) === this.socket.id){
+            uidToApplicationSocketId.delete(this.uid);
+            socketIdToApplicationUid.delete(this.socket.id);
+        }
     }
 
     markEventFunctions() {
@@ -254,6 +321,16 @@ module.exports = {
      * @returns 
      */
     afterNetSocket: (io, socket) => {
+        io.use((socket, next) => {
+            const val = isValid(socket.request);
+            // console.log('actual value of isValid ', val);
+            if (val) {
+                next();
+            } else {
+                // console.log('UnVerified user');
+                next(new Error('invalid'))
+            }
+        });
         return new AfterNetSocket(io, socket)
     }
 }
