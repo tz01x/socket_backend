@@ -1,7 +1,7 @@
 const { Socket, Namespace } = require("socket.io");
 const fetch = require('node-fetch');
 const jwt = require('jsonwebtoken');
-const res = require("express/lib/response");
+
 
 
 const BACKEND_API = process.env.API_ENDPOINT + '/api/afternet'
@@ -12,7 +12,7 @@ const BACKEND_API_DEFAULT_HEADER = {
 
 async function saveMessage(data) {
     try {
-
+        console.log('backend api url is ', BACKEND_API);
         const response = await fetch(`${BACKEND_API}/add-message`, {
             method: 'POST',
             body: JSON.stringify(data),
@@ -323,11 +323,11 @@ module.exports = {
     afterNetSocket: (io, socket) => {
         io.use((socket, next) => {
             const val = isValid(socket.request);
-            // console.log('actual value of isValid ', val);
+            console.log('actual value of isValid ', val);
             if (val) {
                 next();
             } else {
-                // console.log('UnVerified user');
+                console.log('UnVerified user');
                 next(new Error('invalid'))
             }
         });
