@@ -12,7 +12,6 @@ const BACKEND_API_DEFAULT_HEADER = {
 }
 
 async function saveMessage(data) {
-    return { detail: 'error', 'data': '' }
     try {
         const response = await fetch(`${BACKEND_API}/add-message`, {
             method: 'POST',
