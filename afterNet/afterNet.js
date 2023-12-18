@@ -1,6 +1,7 @@
 const { Socket, Namespace } = require("socket.io");
 const fetch = require('node-fetch');
 const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid'); 
 
 
 
@@ -11,8 +12,8 @@ const BACKEND_API_DEFAULT_HEADER = {
 }
 
 async function saveMessage(data) {
+    return { detail: 'error', 'data': '' }
     try {
-        console.log('backend api url is ', BACKEND_API);
         const response = await fetch(`${BACKEND_API}/add-message`, {
             method: 'POST',
             body: JSON.stringify(data),
@@ -182,15 +183,17 @@ class AfterNetSocket {
     async on_sendMessage(data) {
         if (!this.roomId)
             return;
-        console.log('[emit "send_message"] ', data);
-        // this.socket.join(this.roomId);
         if (this.roomId) {
+            const emitMessage = new Promise((resolve,reject)=>{
+                const tempId = uuidv4();
+                this.io.to(this.roomId).emit('receiveMessage', { ...data,id:tempId, 'status': 'success', 'user': this.user });
+                resolve(tempId);
+            }) 
             // this.saveMessageAndNotify(data);
-            const response = await saveMessage(data);
+            const [response,id] = await Promise.all([saveMessage(data), emitMessage]);
 
             if (response.detail == 'success') {
                 // broadcast this message
-                this.io.to(this.roomId).emit('receiveMessage', { ...data, 'status': 'success', 'user': this.user });
                 // todo: SEND NOTIFICATIONS to all other member how is not in this message room.
            
                 let sockets = await this.socket.in(this.roomId).allSockets();
@@ -203,7 +206,7 @@ class AfterNetSocket {
                     return [socketToCurrentActiveRoomUid.get(sid),sid];
                 }));
                 
-                this.others_uids.forEach(uid=>{
+                this.others_uids?.forEach(uid=>{
                     // user who is not in the this room
                     
                     if(!currentActiveUidToSocketID.has(uid)){
@@ -222,7 +225,7 @@ class AfterNetSocket {
 
             } else {
 
-                this.io.to(this.toMe).emit('lastSentMessage', { ...data, 'status': 'error', 'user': this.user });
+                this.io.to(this.toMe).emit('lastSentMessage', { ...data,id:id, 'status': 'error', 'user': this.user });
             }
             // send this message to me
 
@@ -252,16 +255,17 @@ class AfterNetSocket {
         // }
     }
 
-    // on_sendNotification(data) {
+    on_sendNotification(data) {
 
-    //     const { to, content } = data;
-    //     if (to && content) {
-    //         if (to in uiToSocketId) {
-    //             this.socket.to(uiToSocketId[to].app)
-    //                 .emit('notification', data)
-    //         }
-    //     }
-    // }
+        const { to, content } = data;
+        if (to && content) {
+            
+            if (uidToApplicationSocketId.has(to)) {
+                this.socket.to(uidToApplicationSocketId.get(to))
+                    .emit('notification', data)
+            }
+        }
+    }
 
     on_setActiveUser(data) {
         // console.log('[AfterNet.setActiveIsCalled]',data);
