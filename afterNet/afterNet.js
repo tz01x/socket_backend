@@ -1,7 +1,7 @@
 const { Socket, Namespace } = require("socket.io");
 const fetch = require('node-fetch');
 const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid'); 
+const { v4: uuidv4 } = require('uuid');
 
 
 
@@ -31,14 +31,14 @@ async function get_user_info(uid, token) {
         const response = await fetch(BACKEND_API + '/get-user/' + uid, {
             method: 'GET',
             headers: {
-            ...BACKEND_API_DEFAULT_HEADER,
-            'Authorization': `Bearer `+token
+                ...BACKEND_API_DEFAULT_HEADER,
+                'Authorization': `Bearer ` + token
             }
         });
-        if(response.ok){
+        if (response.ok) {
             return { detail: 'success', 'data': await response.json() }
         }
-        return {detail: 'error', 'data': (await response.json())['detail']}
+        return { detail: 'error', 'data': (await response.json())['detail'] }
     } catch (error) {
         return { detail: 'error', 'data': error }
     }
@@ -91,24 +91,24 @@ async function hasRemove(uid1, uid2) {
 }
 
 function isValid(request) {
-    const { origin,uid, token } = request.headers;
-    if(uid && verifyAccessToken(token, uid)){
+    const { origin, uid, token } = request.headers;
+    if (uid && verifyAccessToken(token, uid)) {
         return true;
     }
     return false;
 
 }
 
-async function getChatRoomMembers(roomID,uid,token){
+async function getChatRoomMembers(roomID, uid, token) {
     try {
         const response = await fetch(`${BACKEND_API}/get-chat-room-members/${roomID}/${uid}`, {
             method: 'GET',
             headers: {
                 ...BACKEND_API_DEFAULT_HEADER,
-                'Authorization': `Bearer `+token
+                'Authorization': `Bearer ` + token
             }
         });
-        if(response.ok){
+        if (response.ok) {
             const jData = await response.json();
             return [false, jData];
         }
@@ -124,6 +124,35 @@ const uidToCurrentActiveRoomSocketId = new Map();
 
 const socketIdToApplicationUid = new Map();
 const socketToCurrentActiveRoomUid = new Map();
+
+class TypingState {
+
+    constructor() {
+        this.dataStore = new Map()
+    }
+
+    add(roomID, data) {
+        let uidMapper = {}
+        if (this.dataStore.has(roomID)) {
+            uidMapper = this.dataStore.get(roomID);
+            uidMapper[data.user.uid] = data
+        } else {
+            uidMapper = { [data.user.uid]: data };
+        }
+        this.dataStore.set(roomID, uidMapper);
+    }
+
+    get(roomID) {
+        if (!this.dataStore.get(roomID)) return [];
+        const uidMapper = this.dataStore.get(roomID);
+
+        return Object.values(uidMapper)
+
+    }
+
+}
+
+const typingState = new TypingState()
 
 class AfterNetSocket {
     /**
@@ -142,7 +171,7 @@ class AfterNetSocket {
         this.connected_with_uid = null;
         this.hasRemoved = true;
         this.roomMembers = null;
-        console.log('[AfterNet.newInstanceCreated] ', socket.id,this.uid);
+        console.log('[AfterNet.newInstanceCreated] ', socket.id, this.uid);
         this.markEventFunctions();
     }
 
@@ -158,17 +187,17 @@ class AfterNetSocket {
             this.socket.join([this.roomId, this.toMe]);
             console.log(`config room : socket id ${this.socket.id} for user ${uid}`);
             const result = await get_user_info(this.uid, this.socket.request.headers.token);
-            
+
             if (result.detail == 'success') {
                 this.user = result.data;
-                uidToCurrentActiveRoomSocketId.set(uid,this.socket.id);
+                uidToCurrentActiveRoomSocketId.set(uid, this.socket.id);
                 socketToCurrentActiveRoomUid.set(this.socket.id, uid);
             }
-            const [hasError, res]  = await getChatRoomMembers(this.roomId,this.uid,this.token);
-            if(!hasError){
+            const [hasError, res] = await getChatRoomMembers(this.roomId, this.uid, this.token);
+            if (!hasError) {
 
                 this.roomMembers = res;
-                this.others_uids = this.roomMembers['others'].map(member=>{
+                this.others_uids = this.roomMembers['others'].map(member => {
                     return member?.user?.uid
                 });
             }
@@ -179,52 +208,62 @@ class AfterNetSocket {
         }
     }
 
+    async on_streamTypingText(data) {
+        if (this.roomId) {
+
+            typingState.add(this.roomId, data);
+            const res = typingState.get(this.roomId).filter((val) => !!val?.value);
+
+            this.io.to(this.roomId).emit('receiveTypingStream', res);
+        }
+
+    }
     async on_sendMessage(data) {
         if (!this.roomId)
             return;
         if (this.roomId) {
-            const emitMessage = new Promise((resolve,reject)=>{
+            const emitMessagePromise = new Promise((resolve, reject) => {
                 const tempId = uuidv4();
-                this.io.to(this.roomId).emit('receiveMessage', { ...data,id:tempId, 'status': 'success', 'user': this.user });
+                this.io.to(this.roomId).emit('receiveMessage', { ...data, id: tempId, 'status': 'success', 'user': this.user });
                 resolve(tempId);
-            }) 
+            })
             // this.saveMessageAndNotify(data);
-            const [response,id] = await Promise.all([saveMessage(data), emitMessage]);
+            const [response, id] = await Promise.all([saveMessage(data), emitMessagePromise]);
 
             if (response.detail == 'success') {
                 // broadcast this message
                 // todo: SEND NOTIFICATIONS to all other member how is not in this message room.
-           
+
                 let sockets = await this.socket.in(this.roomId).allSockets();
                 sockets = Array.from(sockets);
                 const currentRoomActiveSocketIDs = new Map(
-                    sockets.map(v=>[v,''])
-                ); 
+                    sockets.map(v => [v, ''])
+                );
 
-                const currentActiveUidToSocketID = new Map(sockets.filter(sid=>socketToCurrentActiveRoomUid.has(sid)).map((sid)=>{
-                    return [socketToCurrentActiveRoomUid.get(sid),sid];
+                const currentActiveUidToSocketID = new Map(sockets.filter(sid => socketToCurrentActiveRoomUid.has(sid)).map((sid) => {
+                    return [socketToCurrentActiveRoomUid.get(sid), sid];
                 }));
-                
-                this.others_uids?.forEach(uid=>{
+
+                this.others_uids?.forEach(uid => {
                     // user who is not in the this room
-                    
-                    if(!currentActiveUidToSocketID.has(uid)){
-                        if(uidToApplicationSocketId.has(uid)){
+
+                    if (!currentActiveUidToSocketID.has(uid)) {
+                        if (uidToApplicationSocketId.has(uid)) {
                             this.socket.to(uidToApplicationSocketId.get(uid))
-                            .emit('notification', {
-                                type: 'new-message',
-                                reloadRequired: false,
-                                content: {roomId:this.roomId},
-                            });
+                                .emit('notification', {
+                                    type: 'new-message',
+                                    reloadRequired: false,
+                                    content: { roomId: this.roomId },
+                                });
                         }
                     }
- 
+
                 })
-                
+
 
             } else {
 
-                this.io.to(this.toMe).emit('lastSentMessage', { ...data,id:id, 'status': 'error', 'user': this.user });
+                this.io.to(this.toMe).emit('lastSentMessage', { ...data, id: id, 'status': 'error', 'user': this.user });
             }
             // send this message to me
 
@@ -258,7 +297,7 @@ class AfterNetSocket {
 
         const { to, content } = data;
         if (to && content) {
-            
+
             if (uidToApplicationSocketId.has(to)) {
                 this.socket.to(uidToApplicationSocketId.get(to))
                     .emit('notification', data)
@@ -273,8 +312,8 @@ class AfterNetSocket {
             console.log(`application socket id ${this.socket.id} for user ${uid}`);
             // socketIdToUid[this.socket.id] = {"app":uid};
             // uiToSocketId[uid] = {"app":this.socket.id};
-            uidToApplicationSocketId.set(uid,this.socket.id);
-            socketIdToApplicationUid.set(this.socket.id,uid);
+            uidToApplicationSocketId.set(uid, this.socket.id);
+            socketIdToApplicationUid.set(this.socket.id, uid);
         }
     }
 
@@ -287,13 +326,13 @@ class AfterNetSocket {
     }
 
     on_disconnect(data) {
-        console.log('[AfterNet.Disconnect] ',this.socket.id, this.uid);
-        
-        if(uidToCurrentActiveRoomSocketId.has(this.uid) && uidToCurrentActiveRoomSocketId.get(this.uid) === this.socket.id){
+        console.log('[AfterNet.Disconnect] ', this.socket.id, this.uid);
+
+        if (uidToCurrentActiveRoomSocketId.has(this.uid) && uidToCurrentActiveRoomSocketId.get(this.uid) === this.socket.id) {
             uidToCurrentActiveRoomSocketId.delete(this.uid);
             socketToCurrentActiveRoomUid.delete(this.socket.id);
 
-        }else if(uidToApplicationSocketId.has(this.uid) && uidToApplicationSocketId.get(this.uid) === this.socket.id){
+        } else if (uidToApplicationSocketId.has(this.uid) && uidToApplicationSocketId.get(this.uid) === this.socket.id) {
             uidToApplicationSocketId.delete(this.uid);
             socketIdToApplicationUid.delete(this.socket.id);
         }
