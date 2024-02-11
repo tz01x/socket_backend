@@ -135,9 +135,9 @@ class TypingState {
         let uidMapper = {}
         if (this.dataStore.has(roomID)) {
             uidMapper = this.dataStore.get(roomID);
-            uidMapper[data.user.uid] = data
+            data?.user?.uid && (uidMapper[data.user.uid] = data)
         } else {
-            uidMapper = { [data.user.uid]: data };
+            data?.user?.uid && (uidMapper = { [data.user.uid]: data });
         }
         this.dataStore.set(roomID, uidMapper);
     }
@@ -249,6 +249,7 @@ class AfterNetSocket {
 
                     if (!currentActiveUidToSocketID.has(uid)) {
                         if (uidToApplicationSocketId.has(uid)) {
+                            
                             this.socket.to(uidToApplicationSocketId.get(uid))
                                 .emit('notification', {
                                     type: 'new-message',
